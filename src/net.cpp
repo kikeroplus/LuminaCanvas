@@ -24,6 +24,32 @@ static void setErr(const char *what, int code)
   Serial.printf("net: %s failed (%d)\n", what, code);
 }
 
+// Stream の find などはデータを待つあいだ millis() を回すだけで CPU を譲らない。
+// コア 0 の IDLE が動けずタスクウォッチドッグで再起動するので、来ていなければ 1 tick 休む
+class YieldStream : public Stream
+{
+  Stream &s;
+
+public:
+  YieldStream(Stream &s) : s(s) {}
+  int available() override { return s.available(); }
+  int read() override
+  {
+    int c = s.read();
+    if (c < 0)
+      vTaskDelay(1);
+    return c;
+  }
+  int peek() override
+  {
+    int c = s.peek();
+    if (c < 0)
+      vTaskDelay(1);
+    return c;
+  }
+  size_t write(uint8_t) override { return 0; }
+};
+
 // "2026-10-22T14:00" の HH:MM
 static void hhmm(char *out, const char *iso)
 {
@@ -53,7 +79,8 @@ static bool fetchWeather()
     return false;
   }
   JsonDocument doc;
-  DeserializationError e = deserializeJson(doc, http.getStream());
+  YieldStream body(http.getStream());
+  DeserializationError e = deserializeJson(doc, body);
   http.end();
   if (e)
   {
@@ -139,7 +166,8 @@ static bool fetchOverview()
     return false;
   }
   JsonDocument doc;
-  DeserializationError e = deserializeJson(doc, http.getStream());
+  YieldStream body(http.getStream());
+  DeserializationError e = deserializeJson(doc, body);
   http.end();
   if (e)
   {
@@ -261,7 +289,7 @@ static int fetchNewsCat(const NewsCat &c, Article *dst, int room)
     http.end();
     return 0;
   }
-  Stream &s = http.getStream();
+  YieldStream s(http.getStream());
   s.setTimeout(5000);
   int n = 0;
   char date[40];
