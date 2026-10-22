@@ -22,7 +22,7 @@ struct Note
 };
 const Note SND_CLICK[] = {{3200, 12}};
 const Note SND_BOOT[] = {{784, 70}, {1175, 70}, {1568, 70}, {2349, 120}};
-const Note SND_MUTE[] = {{1200, 40}, {0, 30}, {800, 60}};
+const Note SND_VOLUME[] = {{1200, 40}, {0, 30}, {800, 60}}; // 音量を変えたときの確認の音
 // XEVIOUS のデモが始まるときのオリジナルの曲: Dm → C → B♭ → A を速い分散和音で下り、A の和音で上がって伸ばす
 const Note SND_XEVIOUS[] = {
     {587, 70}, {698, 70}, {880, 70}, {1175, 70}, {0, 30},  // Dm
@@ -33,23 +33,34 @@ const Note SND_XEVIOUS[] = {
 };
 #define PLAY(s) play(s, sizeof(s) / sizeof(s[0]))
 
-bool muted = false;
+// 音量は PWM の ON の割合で変える (10 ビットで 512 が 50%、今までの音)。小さくするほど音色は細くなる。
+// tone() は裏のタスクで割合を 50% に戻すので使わず、LEDC を直に動かす
+const int BUZ_CH = 0; // バックライトはチャンネル 7 なのでぶつからない
+const uint16_t VOL_DUTY[] = {512, 80, 16, 0};
+const char *VOL_NAMES[] = {"大", "中", "小", "消す"};
+const int VOL_MUTE = 3;
+int volume = 0;
 const Note *seq = nullptr;
 int seqN = 0, seqI = 0;
 uint32_t seqAt = 0;
 
+void buzzerOff() { ledcWrite(BUZ_CH, 0); }
+
 void startNote()
 {
   if (seq[seqI].freq)
-    tone(BUZZER_PIN, seq[seqI].freq);
+  {
+    ledcWriteTone(BUZ_CH, seq[seqI].freq); // 周波数を合わせると割合は 50% になるので、すぐ音量の割合に直す
+    ledcWrite(BUZ_CH, VOL_DUTY[volume]);
+  }
   else
-    noTone(BUZZER_PIN);
+    buzzerOff();
   seqAt = millis();
 }
 
 void play(const Note *s, int n)
 {
-  if (muted)
+  if (volume == VOL_MUTE)
     return;
   seq = s;
   seqN = n;
@@ -65,7 +76,7 @@ void soundUpdate()
     startNote();
   else
   {
-    noTone(BUZZER_PIN);
+    buzzerOff();
     seq = nullptr;
   }
 }
@@ -322,12 +333,15 @@ void handleButtons()
   }
   if (e2 == EV_LONG)
   {
-    muted = !muted;
-    if (muted)
-      noTone(BUZZER_PIN);
+    volume = (volume + 1) % (sizeof(VOL_DUTY) / sizeof(VOL_DUTY[0])); // 大 → 中 → 小 → 消す
+    if (volume == VOL_MUTE)
+    {
+      seq = nullptr;
+      buzzerOff();
+    }
     else
-      PLAY(SND_MUTE);
-    toast(muted ? "音: 消す" : "音: 鳴らす");
+      PLAY(SND_VOLUME); // 新しい音量で鳴らして聞かせる
+    toast((String("音量: ") + VOL_NAMES[volume]).c_str());
   }
   if (e3 == EV_LONG)
   {
@@ -379,6 +393,9 @@ void setup()
   pinMode(SW2_PIN, INPUT_PULLUP);
   pinMode(SW3_PIN, INPUT_PULLUP);
   pinMode(SW4_PIN, INPUT_PULLUP);
+  ledcSetup(BUZ_CH, 2000, 10);
+  ledcAttachPin(BUZZER_PIN, BUZ_CH);
+  buzzerOff();
 
   demos[0] = makeTetris();
   demos[1] = makeInvaders();
