@@ -23,6 +23,14 @@ struct Note
 const Note SND_CLICK[] = {{3200, 12}};
 const Note SND_BOOT[] = {{784, 70}, {1175, 70}, {1568, 70}, {2349, 120}};
 const Note SND_MUTE[] = {{1200, 40}, {0, 30}, {800, 60}};
+// XEVIOUS のデモが始まるときのオリジナルの曲: Dm → C → B♭ → A を速い分散和音で下り、A の和音で上がって伸ばす
+const Note SND_XEVIOUS[] = {
+    {587, 70}, {698, 70}, {880, 70}, {1175, 70}, {0, 30},  // Dm
+    {523, 70}, {659, 70}, {784, 70}, {1047, 70}, {0, 30},  // C
+    {466, 70}, {587, 70}, {698, 70}, {932, 70}, {0, 30},   // B♭
+    {440, 70}, {554, 70}, {659, 70}, {880, 70},            // A
+    {1109, 100}, {1319, 100}, {0, 20}, {1760, 320},
+};
 #define PLAY(s) play(s, sizeof(s) / sizeof(s[0]))
 
 bool muted = false;
@@ -219,7 +227,7 @@ void renderInfo()
 }
 
 // ---- デモ ----
-Demo *demos[6];
+Demo *demos[9];
 const int DEMO_N = sizeof(demos) / sizeof(demos[0]);
 int demoI = 0;
 uint32_t demoAt = 0;
@@ -258,6 +266,8 @@ void gameFrame()
       demos[demoI]->reset();
       demoAt = millis();
       drawDemoLabel();
+      if (!strcmp(demos[demoI]->name(), "XEVIOUS"))
+        PLAY(SND_XEVIOUS);
     }
   }
   else
@@ -375,7 +385,10 @@ void setup()
   demos[2] = makeBreakout();
   demos[3] = makePlatformer();
   demos[4] = makeShooter();
-  demos[5] = makeSnake();
+  demos[5] = makeXevious();
+  demos[6] = makeQuest();
+  demos[7] = makeMouse();
+  demos[8] = makeSnake();
   demos[0]->reset();
 
   netBegin();

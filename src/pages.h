@@ -10,8 +10,11 @@ enum PageId
   PG_NOW,      // 現在の天気
   PG_HOURLY,   // 24 時間の予報
   PG_WEEK,     // 週間予報
+  PG_SUN,      // 日の出・日の入りまでの時間と潮位
+  PG_MOON,     // 月の出・月の入りと満ち欠け
   PG_OVERVIEW, // 気象庁の天気概況
   PG_NEWS,     // ニュース
+  PG_QUAKE,    // 地震情報
   PG_N
 };
 extern const char *PAGE_NAMES[PG_N];

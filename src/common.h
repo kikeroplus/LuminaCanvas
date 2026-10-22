@@ -34,6 +34,7 @@ struct Weather
   int hum, windDir, code;
   bool isDay;
   char sunrise[6], sunset[6];
+  time_t riseT[2], setT[2]; // 今日と明日の日の出・日の入り
   HourWx hours[24];
   int hourN;
   DayWx days[7];
@@ -66,10 +67,56 @@ struct News
   time_t at;
 };
 
+// ---- 潮位 (tide736.net) ----
+struct TideEv
+{
+  time_t t;
+  float cm;
+  bool high; // true = 満潮
+};
+#define TIDE_PTS 73 // 今日の 0:00〜24:00 を 20 分ごと
+struct MoonPass // その日に南中する月の出・南中・月の入り (出は前の日、入りは次の日のこともある)。不明は 0
+{
+  time_t rise, mid, set;
+};
+struct Tide
+{
+  bool ok;
+  time_t at;
+  int mday;           // どの日の潮位か
+  float cm[TIDE_PTS];
+  TideEv ev[10];      // 今日と明日の満潮・干潮 (時刻順)
+  int evN;
+  char title[12];     // 中潮 など
+  float moonAge;
+  MoonPass moon[3];   // 昨日・今日・明日
+};
+
+// ---- 地震 (気象庁) ----
+struct Quake
+{
+  char eid[16];
+  char place[48];  // 震源地。震度速報だけで震源がまだのときは空
+  char when[12];   // "10/22 07:45"
+  char mag[6];     // "2.9"。不明なら空
+  char maxi[4];    // 最大震度 "1"〜"7"、"5-" "5+" など。遠地地震などは空
+  int depth;       // km。-1 は不明
+};
+#define QUAKE_MAX 6
+struct Quakes
+{
+  bool ok;
+  time_t at;
+  Quake q[QUAKE_MAX];
+  int n;
+};
+
 extern Weather wx;
 extern Overview ov;
 extern News news;
-extern SemaphoreHandle_t dataLock; // 上の 3 つを読み書きするときに取る
+extern Tide tide;
+extern Quakes quakes;
+extern SemaphoreHandle_t dataLock; // 上の 5 つを読み書きするときに取る
 
 // 通信の様子 (画面の隅に出す)
 struct NetState
@@ -101,6 +148,9 @@ const char *wxLabel(int code);
 WxIcon wxIcon(int code);
 void drawWxIcon(LGFX_Sprite &g, int cx, int cy, int size, int code, bool day, uint32_t bg);
 const char *windName(int deg);
+
+// ---- 月の満ち欠け (Meeus の式で計算) ----
+time_t nextMoonPhase(time_t t, bool full); // t より後の最初の新月 (full なら満月) の時刻
 
 // ---- 文字 (UTF-8 の日本語を折り返す) ----
 #define LINE_CAP 120

@@ -21,10 +21,17 @@
 #define WX_LON   "136.7606"
 #define JMA_AREA "210000" // 気象庁の府県コード (岐阜県)
 
+// ---- 潮位 (tide736.net。海上保安庁の推算) ----
+#define TIDE_PLACE "四日市港"
+#define TIDE_PC    "24" // 府県 (三重県)
+#define TIDE_HC    "1"  // 港 (四日市)
+
 // ---- 取得の間隔 ----
 #define WX_EVERY_MS   (15UL * 60 * 1000) // 天気 (Open-Meteo)
 #define OV_EVERY_MS   (60UL * 60 * 1000) // 天気概況 (気象庁、1 日 3 回ほど更新される)
 #define NEWS_EVERY_MS (20UL * 60 * 1000) // ニュース (NHK の RSS)
+#define TIDE_EVERY_MS (6UL * 60 * 60 * 1000) // 潮位 (推算なので日付が替わったときにも取り直す)
+#define EQ_EVERY_MS   (3UL * 60 * 1000)  // 地震 (気象庁)
 #define RETRY_MS      (60UL * 1000)      // 失敗したときに次に試すまで
 
 // ---- 画面の割り付け ----

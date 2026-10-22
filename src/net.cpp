@@ -4,12 +4,15 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include <algorithm>
 #include "common.h"
 #include "secrets.h"
 
 Weather wx;
 Overview ov;
 News news;
+Tide tide;
+Quakes quakes;
 NetState net;
 SemaphoreHandle_t dataLock;
 
@@ -55,6 +58,28 @@ static void hhmm(char *out, const char *iso)
 {
   const char *t = strchr(iso, 'T');
   strlcpy(out, t ? t + 1 : "--:--", 6);
+}
+
+// "2026-10-22" と "14:00" を時刻にする (日本時間)。読めなければ 0
+static time_t localTime(const char *ymd, const char *hm)
+{
+  if (strlen(ymd) < 10 || strlen(hm) < 5)
+    return 0;
+  struct tm tm = {};
+  tm.tm_year = atoi(ymd) - 1900;
+  tm.tm_mon = atoi(ymd + 5) - 1;
+  tm.tm_mday = atoi(ymd + 8);
+  tm.tm_hour = atoi(hm);
+  tm.tm_min = atoi(hm + 3);
+  tm.tm_isdst = 0;
+  return mktime(&tm);
+}
+
+// "2026-10-22T14:00" を時刻にする
+static time_t isoTime(const char *iso)
+{
+  const char *t = strchr(iso, 'T');
+  return t ? localTime(iso, t + 1) : 0;
 }
 
 // ---- 天気 (Open-Meteo、鍵なしで使える) ----
@@ -138,6 +163,11 @@ static bool fetchWeather()
   }
   hhmm(w.sunrise, d["sunrise"][0] | "");
   hhmm(w.sunset, d["sunset"][0] | "");
+  for (int i = 0; i < 2; i++)
+  {
+    w.riseT[i] = isoTime(d["sunrise"][i] | "");
+    w.setT[i] = isoTime(d["sunset"][i] | "");
+  }
   w.at = time(nullptr);
   w.ok = true;
 
@@ -339,22 +369,266 @@ static bool fetchNews()
   return true;
 }
 
+// tide736 の月の時刻 "30日 20:20" を、問い合わせた日 ymd を手がかりに時刻にする。読めなければ 0
+static time_t moonTime(const char *ymd, const char *s)
+{
+  const char *k = strstr(s, "日");
+  if (!k)
+    return 0;
+  int day = atoi(s), base = atoi(ymd + 8);
+  const char *hm = k + strlen("日");
+  while (*hm == ' ')
+    hm++;
+  if (strlen(hm) < 5)
+    return 0;
+  struct tm tm = {};
+  tm.tm_year = atoi(ymd) - 1900;
+  tm.tm_mon = atoi(ymd + 5) - 1 + (day - base > 15 ? -1 : base - day > 15 ? 1 : 0); // 月をまたぐとき
+  tm.tm_mday = day;
+  tm.tm_hour = atoi(hm);
+  tm.tm_min = atoi(hm + 3);
+  tm.tm_isdst = 0;
+  return mktime(&tm);
+}
+
+// ---- 潮位と月 (tide736.net。1 日分ずつ返る) ----
+// ymd の日の月の出・入りを t.moon[moonIdx] に入れる。withEvents なら満潮・干潮を t.ev に足し、
+// withCurve なら 20 分ごとの潮位と潮名も入れる
+static bool fetchTideDay(Tide &t, const char *ymd, int moonIdx, bool withCurve, bool withEvents)
+{
+  WiFiClientSecure tls;
+  tls.setInsecure();
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(8000);
+  char url[128];
+  snprintf(url, sizeof(url), "https://tide736.net/api/get_tide.php?pc=" TIDE_PC "&hc=" TIDE_HC "&yr=%d&mn=%d&dy=%d&rg=day",
+           atoi(ymd), atoi(ymd + 5), atoi(ymd + 8));
+  if (!http.begin(tls, url))
+    return false;
+  int code = http.GET();
+  if (code != 200)
+  {
+    setErr("tide", code);
+    http.end();
+    return false;
+  }
+  // 港の一覧なども付いてくるので、使うところだけ読む
+  JsonDocument filter;
+  JsonObject fd = filter["tide"]["chart"][ymd].to<JsonObject>();
+  fd["moon"]["age"] = true;
+  fd["moon"]["title"] = true;
+  fd["moon"]["rise"] = true;
+  fd["moon"]["midline"] = true;
+  fd["moon"]["set"] = true;
+  fd["flood"][0]["time"] = true;
+  fd["flood"][0]["cm"] = true;
+  fd["edd"][0]["time"] = true;
+  fd["edd"][0]["cm"] = true;
+  fd["tide"][0]["cm"] = true;
+  JsonDocument doc;
+  YieldStream body(http.getStream());
+  DeserializationError e = deserializeJson(doc, body, DeserializationOption::Filter(filter));
+  http.end();
+  if (e)
+  {
+    setErr("tide json", (int)e.code());
+    return false;
+  }
+  JsonObject day = doc["tide"]["chart"][ymd];
+  if (day.isNull())
+  {
+    setErr("tide day", 0);
+    return false;
+  }
+  if (withCurve)
+  {
+    JsonArray pts = day["tide"];
+    if (pts.size() < TIDE_PTS)
+    {
+      setErr("tide pts", pts.size());
+      return false;
+    }
+    for (int i = 0; i < TIDE_PTS; i++)
+      t.cm[i] = pts[i]["cm"] | 0.0f;
+    strlcpy(t.title, day["moon"]["title"] | "", sizeof(t.title));
+    t.moonAge = atof(day["moon"]["age"] | "0");
+    t.mday = atoi(ymd + 8);
+  }
+  MoonPass &m = t.moon[moonIdx];
+  m.rise = moonTime(ymd, day["moon"]["rise"] | "");
+  m.mid = moonTime(ymd, day["moon"]["midline"] | "");
+  m.set = moonTime(ymd, day["moon"]["set"] | "");
+  for (int k = 0; k < 2 && withEvents; k++)
+    for (JsonObject o : day[k == 0 ? "flood" : "edd"].as<JsonArray>())
+    {
+      if (t.evN >= (int)(sizeof(t.ev) / sizeof(t.ev[0])))
+        break;
+      TideEv &v = t.ev[t.evN++];
+      v.t = localTime(ymd, o["time"] | "");
+      v.cm = o["cm"] | 0.0f;
+      v.high = k == 0;
+    }
+  return true;
+}
+
+static bool fetchTide()
+{
+  static Tide t;
+  memset(&t, 0, sizeof(t));
+  time_t now = time(nullptr);
+  char ymd[3][12]; // 昨日・今日・明日
+  for (int i = 0; i < 3; i++)
+  {
+    time_t d = now + (i - 1) * 86400;
+    struct tm tm;
+    localtime_r(&d, &tm);
+    strftime(ymd[i], sizeof(ymd[i]), "%Y-%m-%d", &tm);
+  }
+  // 昨日は月だけ (明け方まで出ている月のため)。明日は夜に「次の満潮」と「次の月の出」を出すため
+  if (!fetchTideDay(t, ymd[0], 0, false, false) || !fetchTideDay(t, ymd[1], 1, true, true) ||
+      !fetchTideDay(t, ymd[2], 2, false, true))
+    return false;
+  std::sort(t.ev, t.ev + t.evN, [](const TideEv &a, const TideEv &b) { return a.t < b.t; });
+  t.at = now;
+  t.ok = true;
+
+  xSemaphoreTake(dataLock, portMAX_DELAY);
+  tide = t;
+  xSemaphoreGive(dataLock);
+  Serial.printf("net: tide ok %s, %d events\n", t.title, t.evN);
+  return true;
+}
+
+// ---- 地震 (気象庁の地震情報の一覧。新しい順) ----
+// 1 つの地震に「震度速報」「震源に関する情報」「震源・震度情報」などが別々に並ぶので、eid でまとめる
+static bool fetchQuakes()
+{
+  WiFiClientSecure tls;
+  tls.setInsecure();
+  HTTPClient http;
+  http.useHTTP10(true);
+  http.setTimeout(8000);
+  if (!http.begin(tls, "https://www.jma.go.jp/bosai/quake/data/list.json"))
+    return false;
+  int code = http.GET();
+  if (code != 200)
+  {
+    setErr("quake", code);
+    http.end();
+    return false;
+  }
+  JsonDocument filter;
+  for (const char *k : {"eid", "at", "anm", "mag", "maxi", "cod"})
+    filter[k] = true;
+
+  static Quakes qs;
+  static Quake extra; // QUAKE_MAX + 1 件目。これが出てきたら前の地震の報は出そろっている
+  memset(&qs, 0, sizeof(qs));
+  memset(&extra, 0, sizeof(extra));
+  YieldStream s(http.getStream());
+  s.setTimeout(5000);
+  bool ok = s.find("[");
+  int distinct = 0;
+  // 全体は 200KB ほどあるので、地震が QUAKE_MAX + 1 件そろうまで読んだら切る
+  while (ok && distinct <= QUAKE_MAX)
+  {
+    JsonDocument doc;
+    DeserializationError e = deserializeJson(doc, s, DeserializationOption::Filter(filter));
+    if (e)
+    {
+      ok = qs.n > 0;
+      if (!ok)
+        setErr("quake json", (int)e.code());
+      break;
+    }
+    const char *eid = doc["eid"] | "";
+    const char *anm = doc["anm"] | "";
+    const char *maxi = doc["maxi"] | "";
+    if (*eid && (*anm || *maxi)) // 南海トラフの解説情報などは地震ではないので飛ばす
+    {
+      Quake *q = nullptr;
+      for (int i = 0; i < qs.n && !q; i++)
+        if (!strcmp(qs.q[i].eid, eid))
+          q = &qs.q[i];
+      if (!q && !strcmp(extra.eid, eid))
+        q = &extra;
+      if (!q)
+      {
+        q = distinct < QUAKE_MAX ? &qs.q[qs.n++] : &extra;
+        memset(q, 0, sizeof(*q));
+        q->depth = -1;
+        strlcpy(q->eid, eid, sizeof(q->eid));
+        const char *at = doc["at"] | ""; // 2026-10-22T07:45:00+09:00
+        if (strlen(at) >= 16)
+          snprintf(q->when, sizeof(q->when), "%d/%d %.5s", atoi(at + 5), atoi(at + 8), at + 11);
+        distinct++;
+      }
+      // 新しい報ほど先に来るので、まだ空の欄だけ埋める
+      if (!*q->place)
+        strlcpy(q->place, anm, sizeof(q->place));
+      if (!*q->maxi)
+        strlcpy(q->maxi, maxi, sizeof(q->maxi));
+      const char *mag = doc["mag"] | "";
+      if (!*q->mag && isdigit((uint8_t)*mag))
+        strlcpy(q->mag, mag, sizeof(q->mag));
+      // "+32.4+130.6-10000/" の 3 つ目が深さ (m、下向きが負)
+      const char *cod = doc["cod"] | "";
+      if (q->depth < 0 && *cod)
+      {
+        int signs = 0;
+        for (const char *c = cod; *c; c++)
+          if ((*c == '+' || *c == '-') && ++signs == 3)
+          {
+            q->depth = abs(atoi(c)) / 1000;
+            break;
+          }
+      }
+    }
+    // 次の要素へ ("," か、配列の終わり "]")
+    int c;
+    while ((c = s.read()) >= 0 && c != ',' && c != ']')
+      ;
+    if (c != ',')
+      break;
+  }
+  http.end();
+  if (!ok || qs.n == 0)
+    return false;
+  qs.at = time(nullptr);
+  qs.ok = true;
+
+  xSemaphoreTake(dataLock, portMAX_DELAY);
+  quakes = qs;
+  xSemaphoreGive(dataLock);
+  Serial.printf("net: quakes ok (%d) %s %s\n", qs.n, qs.q[0].place, qs.q[0].maxi);
+  return true;
+}
+
 static void netTask(void *)
 {
-  uint32_t wxDue = 0, ovDue = 0, newsDue = 0; // 0 はすぐ
+  uint32_t wxDue = 0, ovDue = 0, newsDue = 0, tideDue = 0, eqDue = 0; // 0 はすぐ
   for (;;)
   {
     net.wifi = WiFi.status() == WL_CONNECTED;
     if (refreshAll)
     {
       refreshAll = false;
-      wxDue = ovDue = newsDue = 0;
+      wxDue = ovDue = newsDue = tideDue = eqDue = 0;
     }
     uint32_t now = millis();
     if (net.wifi)
     {
       // 時刻が合うまでは待つ (天気の曜日やニュースの日付に使う)
-      bool clockOk = time(nullptr) > 1700000000;
+      time_t t = time(nullptr);
+      bool clockOk = t > 1700000000;
+      if (clockOk && tide.ok && (int32_t)(now - tideDue) < 0) // 潮位は日付が替わったら取り直す
+      {
+        struct tm tm;
+        localtime_r(&t, &tm);
+        if (tm.tm_mday != tide.mday)
+          tideDue = now;
+      }
       if (clockOk && (!wxDue || (int32_t)(now - wxDue) >= 0))
       {
         net.busy = true;
@@ -364,6 +638,16 @@ static void netTask(void *)
       {
         net.busy = true;
         ovDue = millis() + (fetchOverview() ? OV_EVERY_MS : RETRY_MS);
+      }
+      else if (clockOk && (!eqDue || (int32_t)(now - eqDue) >= 0))
+      {
+        net.busy = true;
+        eqDue = millis() + (fetchQuakes() ? EQ_EVERY_MS : RETRY_MS);
+      }
+      else if (clockOk && (!tideDue || (int32_t)(now - tideDue) >= 0))
+      {
+        net.busy = true;
+        tideDue = millis() + (fetchTide() ? TIDE_EVERY_MS : RETRY_MS);
       }
       else if (clockOk && (!newsDue || (int32_t)(now - newsDue) >= 0))
       {

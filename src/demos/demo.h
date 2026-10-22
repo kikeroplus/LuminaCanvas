@@ -17,6 +17,9 @@ Demo *makeInvaders();
 Demo *makeBreakout();
 Demo *makePlatformer();
 Demo *makeShooter();
+Demo *makeXevious();
+Demo *makeQuest();
+Demo *makeMouse();
 Demo *makeSnake();
 
 // ---- 共通の道具 ----

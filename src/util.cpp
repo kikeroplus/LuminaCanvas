@@ -69,6 +69,36 @@ const char *windName(int deg)
   return N[((deg * 16 + 180) / 360) % 16];
 }
 
+// ---- 月の満ち欠け ----
+// k 番目の新月 (k + 0.5 なら満月) の時刻。Meeus『天文アルゴリズム』49 章の主な項だけ (誤差は数分)
+static time_t moonPhaseAt(double k, bool full)
+{
+  double T = k / 1236.85;
+  double jde = 2451550.09766 + 29.530588861 * k + 0.00015437 * T * T;
+  double M = radians(2.5534 + 29.10535670 * k), Mp = radians(201.5643 + 385.81693528 * k),
+         F = radians(160.7108 + 390.67050284 * k), E = 1 - 0.002516 * T;
+  jde += (full ? -0.40614 : -0.40720) * sin(Mp) + (full ? 0.17302 : 0.17241) * E * sin(M) +
+         (full ? 0.01614 : 0.01608) * sin(2 * Mp) + (full ? 0.01043 : 0.01039) * sin(2 * F) +
+         (full ? 0.00734 : 0.00739) * E * sin(Mp - M) - (full ? 0.00515 : 0.00514) * E * sin(Mp + M) +
+         (full ? 0.00209 : 0.00208) * E * E * sin(2 * M) - 0.00111 * sin(Mp - 2 * F) - 0.00057 * sin(Mp + 2 * F) +
+         0.00056 * E * sin(2 * Mp + M) - 0.00042 * sin(3 * Mp);
+  return (time_t)((jde - 2440587.5) * 86400 - 69); // 力学時と世界時の差 (約 69 秒) を引く
+}
+
+time_t nextMoonPhase(time_t t, bool full)
+{
+  double k = floor((1970 + t / 31557600.0 - 2000) * 12.3685) - 2;
+  if (full)
+    k += 0.5;
+  for (int i = 0; i < 6; i++, k += 1)
+  {
+    time_t p = moonPhaseAt(k, full);
+    if (p > t)
+      return p;
+  }
+  return 0;
+}
+
 // ---- 天気の絵 (図形で描く。size は外枠の一辺) ----
 static void sun(LGFX_Sprite &g, int cx, int cy, int r)
 {
@@ -192,6 +222,8 @@ static bool noHead(const char *p, int n)
 int wrapText(LGFX_Sprite &g, const char *s, int maxW, char (*out)[LINE_CAP], int maxLines)
 {
   int lines = 0, len = 0, w = 0;
+  int prevLen = 0;            // 直前の 1 文字を入れる前の len
+  const char *prevP = nullptr; // その文字の s の中の位置
   char *cur = out[0];
   cur[0] = 0;
   const char *p = s;
@@ -211,14 +243,22 @@ int wrapText(LGFX_Sprite &g, const char *s, int maxW, char (*out)[LINE_CAP], int
     char ch[5] = {};
     memcpy(ch, p, n);
     int cw = g.textWidth(ch);
-    // はみ出すなら改行。ただし行頭禁則の文字はぶら下げて今の行に入れる
-    if (w + cw > maxW && len > 0 && !noHead(p, n))
+    // はみ出すなら改行。行頭禁則の文字は、直前の 1 文字といっしょに次の行へ送る (ぶら下げると右にはみ出す)
+    if (w + cw > maxW && len > 0)
     {
+      bool pushed = noHead(p, n) && prevLen > 0;
+      if (pushed)
+      {
+        cur[prevLen] = 0;
+        p = prevP;
+      }
       if (++lines >= maxLines)
         break;
       cur = out[lines];
       cur[0] = 0;
       len = w = 0;
+      if (pushed)
+        continue; // 戻した文字から読み直す
       if (*p == ' ')
       {
         p++;
@@ -227,6 +267,8 @@ int wrapText(LGFX_Sprite &g, const char *s, int maxW, char (*out)[LINE_CAP], int
     }
     if (len + n < LINE_CAP)
     {
+      prevLen = len;
+      prevP = p;
       memcpy(cur + len, ch, n + 1);
       len += n;
       w += cw;
