@@ -214,8 +214,9 @@ void drawFooter(LGFX_Sprite &g, uint32_t ms)
   g.setTextDatum(TL_DATUM);
   g.setTextColor(C_DIM);
   g.drawString(PAGE_NAMES[page], 5, 228);
+  const int step = pageWide() ? 8 : 7, x0 = (pageWide() ? pageW / 2 : 122) - (PG_N - 1) * step / 2; // 狭いときはページ名と右の「3/24」の間に収める
   for (int i = 0; i < PG_N; i++)
-    g.fillCircle((pageWide() ? pageW / 2 - 28 : 104) + i * 8, 233, i == page ? 2 : 1, i == page ? C_CYAN : C_LINE);
+    g.fillCircle(x0 + i * step, 233, i == page ? 2 : 1, i == page ? C_CYAN : C_LINE);
   char sub[16];
   pageSubInfo(page, ms, sub, sizeof(sub));
   g.setTextDatum(TR_DATUM);
@@ -357,6 +358,18 @@ void gameFrame()
 }
 
 // ---- 操作 ----
+const char *switchState(int sw)
+{
+  switch (sw)
+  {
+  case 0: return BL_NAMES[blLevel];
+  case 1: return VOL_NAMES[volume];
+  case 2: return autoRotate ? "オン" : "オフ";
+  case 3: return net.busy ? "取得中" : "";
+  default: return "";
+  }
+}
+
 void handleButtons()
 {
   BtnEv e1 = buttonUpdate(sw1), e2 = buttonUpdate(sw2), e3 = buttonUpdate(sw3), e4 = buttonUpdate(sw4);
@@ -478,7 +491,7 @@ void loop()
 
   uint32_t now = millis();
   if (autoRotate && pageProgress(page, now - pageAt) >= 1.0f)
-    gotoPage(page + 1);
+    gotoPage(page + 1 < PG_AUTO_N ? page + 1 : 0); // 地震情報の次や、入手元・操作のページからは最初へ
 
   static uint32_t lastGame = 0;
   if (demoI != DEMO_NONE && now - lastGame >= 33) // 約 30 フレーム/秒

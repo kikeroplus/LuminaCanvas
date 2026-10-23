@@ -16,8 +16,11 @@ enum PageId
   PG_OVERVIEW, // 気象庁の天気概況
   PG_NEWS,     // ニュース
   PG_QUAKE,    // 地震情報
+  PG_SOURCES,  // 情報の入手元
+  PG_HELP,     // スイッチの操作
   PG_N
 };
+#define PG_AUTO_N PG_SOURCES // 自動切り替えで回るのはここより前だけ (入手元と操作は SW1/SW2 で開く)
 extern const char *PAGE_NAMES[PG_N];
 extern int pageW;
 inline bool pageWide() { return pageW > INFO_W; }
@@ -29,3 +32,6 @@ void drawPage(LGFX_Sprite &g, int page, uint32_t ms);
 // 下の帯の右に出す「3/24」など (なければ空)
 void pageSubInfo(int page, uint32_t ms, char *out, size_t cap);
 void pageNextItem(int page); // SW4: ニュースは次の記事、概況は次の画面
+
+// スイッチ sw (0〜3) の長押しで切り替わるもののいまの値 (「明るい」など。なければ空)。main.cpp が書く
+const char *switchState(int sw);

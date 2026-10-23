@@ -1,9 +1,9 @@
-// 左側 (デモなしでは全幅) のページ: 現在の天気・24 時間・週間・日の出と潮位・月・天気概況・ニュース・地震
+// 左側 (デモなしでは全幅) のページ: 現在の天気・24 時間・週間・日の出と潮位・月・天気概況・ニュース・地震・入手元・操作
 #include "pages.h"
 
 int pageW = INFO_W;
 
-const char *PAGE_NAMES[PG_N] = {"現在の天気", "24時間の予報", "週間予報", "日の出と潮位", "月の満ち欠け", "天気概況", "ニュース", "地震情報"};
+const char *PAGE_NAMES[PG_N] = {"現在の天気", "24時間の予報", "週間予報", "日の出と潮位", "月の満ち欠け", "天気概況", "ニュース", "地震情報", "情報の入手元", "スイッチの操作"};
 
 #define FJ12 (&fonts::lgfxJapanGothicP_12)
 #define FJ16 (&fonts::lgfxJapanGothicP_16)
@@ -15,6 +15,7 @@ const char *PAGE_NAMES[PG_N] = {"現在の天気", "24時間の予報", "週間�
 #define OV_LINES_PER  8
 #define NEWS_ITEM_MS  10000 // ニュース 1 本
 #define NEWS_PER_VISIT 5    // 1 回にニュースを何本見せたら次のページへ行くか
+#define MANUAL_MS     30000 // 入手元と操作のページを開いてから最初のページへ戻るまで
 
 static void txt(LGFX_Sprite &g, const lgfx::IFont *f, uint32_t c, int x, int y, const char *s, uint8_t datum = TL_DATUM)
 {
@@ -849,6 +850,108 @@ static void drawQuake(LGFX_Sprite &g)
   }
 }
 
+// ---- 情報の入手元 ----
+// 取得の間隔 (ms) を「15分ごと」「6時間ごと」に
+static void fmtEvery(char *b, size_t cap, unsigned long ms)
+{
+  unsigned long m = ms / 60000;
+  if (m >= 60 && m % 60 == 0)
+    snprintf(b, cap, "%lu時間ごと", m / 60);
+  else
+    snprintf(b, cap, "%lu分ごと", m);
+}
+
+static void drawSources(LGFX_Sprite &g)
+{
+  struct Src
+  {
+    const char *what, *from;
+    unsigned long every; // 0 は取得しないもの
+    time_t at;           // 最後に取れた時刻 (0 はまだ)
+  };
+  static char ovFrom[48];
+  xSemaphoreTake(dataLock, portMAX_DELAY);
+  snprintf(ovFrom, sizeof(ovFrom), "気象庁 (%s)", ov.ok && *ov.office ? ov.office : "天気概況");
+  const Src S[] = {
+      {"天気・予報・日の出", "Open-Meteo (open-meteo.com)", WX_EVERY_MS, wx.ok ? wx.at : 0},
+      {"天気概況", ovFrom, OV_EVERY_MS, ov.ok ? ov.at : 0},
+      {"ニュース", "NHK ニュースの RSS", NEWS_EVERY_MS, news.n > 0 ? news.at : 0},
+      {"潮位・月の出入り", "tide736.net (" TIDE_PLACE "、海保の推算)", TIDE_EVERY_MS, tide.ok ? tide.at : 0},
+      {"地震情報", "気象庁 (地震情報の一覧)", EQ_EVERY_MS, quakes.ok ? quakes.at : 0},
+      {"月の満ち欠け", "本体で計算 (Meeus の式)", 0, 0},
+      {"時刻", "NTP (ntp.nict.jp ほか)", 0, 0},
+  };
+  xSemaphoreGive(dataLock);
+
+  const int RH = 27;
+  char b[24];
+  static char line[1][LINE_CAP];
+  for (int i = 0; i < (int)(sizeof(S) / sizeof(S[0])); i++)
+  {
+    const Src &s = S[i];
+    int y = CONTENT_Y + 1 + i * RH;
+    if (i > 0)
+      g.drawFastHLine(4, y - 1, pageW - 8, C_LINE);
+    txt(g, FJ12, C_AMBER, 6, y + 1, s.what);
+    // 右に取得の間隔と、最後に取れた時刻
+    if (s.every)
+    {
+      int x = pageW - 6;
+      if (s.at)
+        hm(b, sizeof(b), s.at);
+      else
+        strcpy(b, "まだ");
+      txt(g, FJ12, s.at ? C_TEXT : C_DIM, x, y + 1, b, TR_DATUM);
+      g.setFont(FJ12);
+      x -= g.textWidth(b) + 6;
+      fmtEvery(b, sizeof(b), s.every);
+      txt(g, FJ12, C_DIM, x, y + 1, b, TR_DATUM);
+    }
+    g.setFont(FJ12);
+    wrapText(g, s.from, pageW - 18, line, 1); // 狭いときに入らなければ「…」で切る
+    txt(g, FJ12, C_TEXT, 12, y + 14, line[0]);
+  }
+}
+
+// ---- スイッチの操作 ----
+static void drawHelp(LGFX_Sprite &g)
+{
+  // 狭いときは短い言葉、広いときは詳しく
+  struct Sw
+  {
+    const char *press, *pressWide, *hold, *holdWide;
+  };
+  static const Sw S[4] = {
+      {"次のページ", "次のページ", "明るさ", "明るさを変える"},
+      {"前のページ", "前のページ", "音量", "音量を変える"},
+      {"次のデモ", "次のデモ (SNAKE の次は「なし」)", "自動送り", "ページの自動切り替え"},
+      {"次の記事・画面", "ニュースの次の記事 / 概況の次の画面", "取り直す", "天気とニュースを取り直す"},
+  };
+  const bool wide = pageWide();
+  const int RH = 48, VX = 84;
+  static char line[1][LINE_CAP];
+  char b[4];
+  for (int i = 0; i < 4; i++)
+  {
+    int y = CONTENT_Y + 1 + i * RH;
+    if (i > 0)
+      g.drawFastHLine(4, y - 1, pageW - 8, C_LINE);
+    g.fillRoundRect(4, y + 3, 34, 41, 5, C_PANEL);
+    txt(g, FJ12, C_DIM, 21, y + 6, "SW", TC_DATUM);
+    snprintf(b, sizeof(b), "%d", i + 1);
+    txt(g, FJ20, C_CYAN, 21, y + 20, b, TC_DATUM);
+
+    txt(g, FJ12, C_DIM, 44, y + 7, "押す");
+    g.setFont(FJ16);
+    wrapText(g, wide ? S[i].pressWide : S[i].press, pageW - 6 - VX, line, 1);
+    txt(g, FJ16, C_TEXT, VX, y + 4, line[0]);
+
+    txt(g, FJ12, C_DIM, 44, y + 28, "長押し");
+    txt(g, FJ16, C_TEXT, VX, y + 25, wide ? S[i].holdWide : S[i].hold);
+    txt(g, FJ12, C_AMBER, pageW - 6, y + 28, switchState(i), TR_DATUM);
+  }
+}
+
 // ---- ページの切り替え ----
 void pageEnter(int page)
 {
@@ -877,6 +980,9 @@ float pageProgress(int page, uint32_t ms)
       newsIdx++; // 5 本目が終わったときも進めておき、次に来たときは続きから
     }
     return (newsShown + (float)(ms - newsItemAt) / NEWS_ITEM_MS) / NEWS_PER_VISIT;
+  case PG_SOURCES:
+  case PG_HELP:
+    return (float)ms / MANUAL_MS;
   default:
     return (float)ms / PAGE_MS;
   }
@@ -894,6 +1000,8 @@ void drawPage(LGFX_Sprite &g, int page, uint32_t ms)
   case PG_OVERVIEW: drawOverview(g, ms); break;
   case PG_NEWS: drawNews(g); break;
   case PG_QUAKE: drawQuake(g); break;
+  case PG_SOURCES: drawSources(g); break;
+  case PG_HELP: drawHelp(g); break;
   }
 }
 
