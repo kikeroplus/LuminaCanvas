@@ -5,7 +5,7 @@
 #include "demos/demo.h"
 
 LGFX lcd;
-LGFX_Sprite info(&lcd); // 左のページ (INFO_W x 240)
+LGFX_Sprite info(&lcd); // 左のページ (320 x 240。デモを流しているときは左の pageW だけ出す)
 LGFX_Sprite game(&lcd); // 右のデモ (GAME_W x GAME_H)
 
 #define FJ12 (&fonts::lgfxJapanGothicP_12)
@@ -179,29 +179,50 @@ void drawHeader(LGFX_Sprite &g, float prog)
     snprintf(b, sizeof(b), "%d:%02d", t.tm_hour, t.tm_min);
   else
     strcpy(b, "--:--");
-  g.drawString(b, INFO_W - 6, 2);
+  g.drawString(b, pageW - 6, 2);
+
+  // 広いときは日付と時計の間に、いまの天気と気温
+  if (pageWide())
+  {
+    xSemaphoreTake(dataLock, portMAX_DELAY);
+    bool ok = wx.ok;
+    int code = wx.code;
+    bool day = wx.isDay;
+    float temp = wx.temp;
+    xSemaphoreGive(dataLock);
+    if (ok)
+    {
+      snprintf(b, sizeof(b), "%.1f°", temp);
+      g.setFont(FJ16);
+      int tw = g.textWidth(b), x = 168 - (22 + tw) / 2;
+      drawWxIcon(g, x + 9, 13, 18, code, day, C_BG);
+      g.setTextColor(C_TEXT);
+      g.setTextDatum(TL_DATUM);
+      g.drawString(b, x + 22, 6);
+    }
+  }
 
   // 自動で次のページへ行くまでの残り
-  g.drawFastHLine(0, 27, INFO_W - 1, C_LINE);
-  g.drawFastHLine(0, 27, (INFO_W - 1) * constrain(prog, 0.0f, 1.0f), autoRotate ? C_CYAN : C_AMBER);
+  g.drawFastHLine(0, 27, pageW - 1, C_LINE);
+  g.drawFastHLine(0, 27, (pageW - 1) * constrain(prog, 0.0f, 1.0f), autoRotate ? C_CYAN : C_AMBER);
 }
 
 void drawFooter(LGFX_Sprite &g, uint32_t ms)
 {
-  g.drawFastHLine(0, 225, INFO_W - 1, C_LINE);
+  g.drawFastHLine(0, 225, pageW - 1, C_LINE);
   g.setFont(FJ12);
   g.setTextDatum(TL_DATUM);
   g.setTextColor(C_DIM);
   g.drawString(PAGE_NAMES[page], 5, 228);
   for (int i = 0; i < PG_N; i++)
-    g.fillCircle(104 + i * 8, 233, i == page ? 2 : 1, i == page ? C_CYAN : C_LINE);
+    g.fillCircle((pageWide() ? pageW / 2 - 28 : 104) + i * 8, 233, i == page ? 2 : 1, i == page ? C_CYAN : C_LINE);
   char sub[16];
   pageSubInfo(page, ms, sub, sizeof(sub));
   g.setTextDatum(TR_DATUM);
-  g.drawString(sub, INFO_W - 16, 228);
+  g.drawString(sub, pageW - 16, 228);
   // 通信の様子: 緑 = つながっている、黄の点滅 = 取得中、赤 = WiFi なし
   uint32_t c = !net.wifi ? C_RED : net.busy ? ((millis() / 250) % 2 ? C_YELLOW : C_LINE) : C_GREEN;
-  g.fillCircle(INFO_W - 8, 233, 3, c);
+  g.fillCircle(pageW - 8, 233, 3, c);
 }
 
 void renderInfo()
@@ -215,32 +236,31 @@ void renderInfo()
   {
     info.setFont(FJ12);
     int w = info.textWidth(toastMsg) + 20;
-    info.fillRoundRect((INFO_W - w) / 2, 200, w, 20, 6, C_PANEL);
-    info.drawRoundRect((INFO_W - w) / 2, 200, w, 20, 6, C_CYAN);
+    info.fillRoundRect((pageW - w) / 2, 200, w, 20, 6, C_PANEL);
+    info.drawRoundRect((pageW - w) / 2, 200, w, 20, 6, C_CYAN);
     info.setTextColor(C_TEXT);
     info.setTextDatum(MC_DATUM);
-    info.drawString(toastMsg, INFO_W / 2, 210);
+    info.drawString(toastMsg, pageW / 2, 210);
   }
-  info.drawFastVLine(INFO_W - 1, 0, SCREEN_H, C_LINE); // 右の小窓との仕切り
+  if (!pageWide())
+    info.drawFastVLine(INFO_W - 1, 0, SCREEN_H, C_LINE); // 右の小窓との仕切り
 
-  // ページが替わった直後は左から拭き取るように出す
+  // ページが替わった直後は左から拭き取るように出す。デモを流しているときは右の小窓にかからないよう左だけ
   uint32_t w = millis() - wipeAt;
+  int x = w < WIPE_MS ? pageW * w / WIPE_MS : pageW;
+  lcd.setClipRect(0, 0, x, SCREEN_H);
+  info.pushSprite(0, 0);
+  lcd.clearClipRect();
   if (w < WIPE_MS)
-  {
-    int x = INFO_W * w / WIPE_MS;
-    lcd.setClipRect(0, 0, x, SCREEN_H);
-    info.pushSprite(0, 0);
-    lcd.clearClipRect();
     lcd.drawFastVLine(x, 0, SCREEN_H, C_CYAN);
-  }
-  else
-    info.pushSprite(0, 0);
 }
 
 // ---- デモ ----
 Demo *demos[9];
 const int DEMO_N = sizeof(demos) / sizeof(demos[0]);
+const int DEMO_NONE = DEMO_N; // SW3 で SNAKE の次に来る「なし」。デモの小窓をなくしてページを全幅にする
 int demoI = 0;
+int demoNext = 0; // シャッターが閉じきったときに替える先
 uint32_t demoAt = 0;
 int shutter = 0; // 0 でなければ切り替え中 (SHUTTER_N から数え下げる)
 
@@ -260,9 +280,31 @@ void drawDemoLabel()
   lcd.drawString(b, SCREEN_W - 4, 3);
 }
 
-void nextDemo()
+void startDemo(int i)
 {
-  if (!shutter)
+  demoI = i;
+  demos[demoI]->reset();
+  demoAt = millis();
+  drawDemoLabel();
+  if (!strcmp(demos[demoI]->name(), "XEVIOUS"))
+    PLAY(SND_XEVIOUS);
+}
+
+// SW3 で押したときは「なし」も順に回る。45 秒ごとの自動送りは「なし」を飛ばす
+void nextDemo(bool manual)
+{
+  if (shutter)
+    return;
+  demoNext = (demoI + 1) % (manual ? DEMO_N + 1 : DEMO_N);
+  if (demoI == DEMO_NONE)
+  {
+    // 「なし」から戻るときは、ページを左に縮め、右はシャッターが閉じたところから開くだけ
+    pageW = INFO_W;
+    infoDirty = true;
+    startDemo(demoNext);
+    shutter = SHUTTER_N / 2;
+  }
+  else
     shutter = SHUTTER_N;
 }
 
@@ -273,19 +315,24 @@ void gameFrame()
     shutter--;
     if (shutter == SHUTTER_N / 2) // 閉じきったところで入れ替える
     {
-      demoI = (demoI + 1) % DEMO_N;
-      demos[demoI]->reset();
-      demoAt = millis();
-      drawDemoLabel();
-      if (!strcmp(demos[demoI]->name(), "XEVIOUS"))
-        PLAY(SND_XEVIOUS);
+      if (demoNext == DEMO_NONE)
+      {
+        // デモの小窓をなくし、ページを全幅に広げて拭き取りで出し直す
+        demoI = DEMO_NONE;
+        shutter = 0;
+        pageW = SCREEN_W;
+        wipeAt = millis();
+        infoDirty = true;
+        return;
+      }
+      startDemo(demoNext);
     }
   }
   else
   {
     demos[demoI]->step();
     if (millis() - demoAt >= DEMO_MS)
-      nextDemo();
+      nextDemo(false);
   }
   demos[demoI]->draw(game);
 
@@ -301,8 +348,9 @@ void gameFrame()
     game.drawFastHLine(0, GAME_H - h - 1, GAME_W, C_CYAN);
     if (k >= half - 2)
     {
-      int nextI = shutter > half ? (demoI + 1) % DEMO_N : demoI;
-      hud(game, GAME_W / 2, GAME_H / 2 - 4, C_CYAN, demos[nextI]->name(), TC_DATUM);
+      int nextI = shutter > half ? demoNext : demoI;
+      if (nextI != DEMO_NONE)
+        hud(game, GAME_W / 2, GAME_H / 2 - 4, C_CYAN, demos[nextI]->name(), TC_DATUM);
     }
   }
   game.pushSprite(GAME_X, GAME_LABEL_H);
@@ -322,7 +370,7 @@ void handleButtons()
   if (e2 == EV_SHORT)
     gotoPage(page - 1);
   if (e3 == EV_SHORT)
-    nextDemo();
+    nextDemo(true);
   if (e4 == EV_SHORT)
     pageNextItem(page);
   if (e1 == EV_LONG)
@@ -386,7 +434,7 @@ void setup()
   info.setPsram(true);
   game.setColorDepth(16);
   game.setPsram(true);
-  if (!info.createSprite(INFO_W, SCREEN_H) || !game.createSprite(GAME_W, GAME_H))
+  if (!info.createSprite(SCREEN_W, SCREEN_H) || !game.createSprite(GAME_W, GAME_H))
     Serial.println("sprite alloc failed!");
 
   pinMode(SW1_PIN, INPUT_PULLUP);
@@ -406,7 +454,6 @@ void setup()
   demos[6] = makeQuest();
   demos[7] = makeMouse();
   demos[8] = makeSnake();
-  demos[0]->reset();
 
   netBegin();
   PLAY(SND_BOOT);
@@ -419,8 +466,7 @@ void setup()
   }
 
   lcd.fillScreen(C_BG);
-  demoAt = millis();
-  drawDemoLabel();
+  startDemo(0);
   gotoPage(PG_NOW);
   Serial.printf("heap: free %u, psram free %u\n", ESP.getFreeHeap(), ESP.getFreePsram());
 }
@@ -435,7 +481,7 @@ void loop()
     gotoPage(page + 1);
 
   static uint32_t lastGame = 0;
-  if (now - lastGame >= 33) // 約 30 フレーム/秒
+  if (demoI != DEMO_NONE && now - lastGame >= 33) // 約 30 フレーム/秒
   {
     lastGame = now;
     gameFrame();

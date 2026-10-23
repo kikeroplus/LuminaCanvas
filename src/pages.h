@@ -1,7 +1,8 @@
 #pragma once
 #include "common.h"
 
-// 左側 (幅 INFO_W) のページ。上の帯 (時計) と下の帯 (ページ名) は main.cpp が描く
+// 左側のページ。幅は pageW (デモを流しているときは INFO_W、デモを「なし」にすると SCREEN_W)。
+// 上の帯 (時計) と下の帯 (ページ名) は main.cpp が描く
 #define CONTENT_Y 31
 #define CONTENT_B 224 // 中身を描いてよい下の端
 
@@ -18,6 +19,8 @@ enum PageId
   PG_N
 };
 extern const char *PAGE_NAMES[PG_N];
+extern int pageW;
+inline bool pageWide() { return pageW > INFO_W; }
 
 void pageEnter(int page);
 // このページを見せ始めてからの時間 ms に対して、自動で次へ進むまでの進み具合 (1 以上で次へ)

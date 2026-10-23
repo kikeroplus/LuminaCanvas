@@ -1,5 +1,7 @@
-// 左側のページ: 現在の天気・24 時間・週間・日の出と潮位・月・天気概況・ニュース・地震
+// 左側 (デモなしでは全幅) のページ: 現在の天気・24 時間・週間・日の出と潮位・月・天気概況・ニュース・地震
 #include "pages.h"
+
+int pageW = INFO_W;
 
 const char *PAGE_NAMES[PG_N] = {"現在の天気", "24時間の予報", "週間予報", "日の出と潮位", "月の満ち欠け", "天気概況", "ニュース", "地震情報"};
 
@@ -24,7 +26,7 @@ static void txt(LGFX_Sprite &g, const lgfx::IFont *f, uint32_t c, int x, int y, 
 
 static void noData(LGFX_Sprite &g, const char *msg)
 {
-  txt(g, FJ16, C_DIM, INFO_W / 2, (CONTENT_Y + CONTENT_B) / 2, msg, MC_DATUM);
+  txt(g, FJ16, C_DIM, pageW / 2, (CONTENT_Y + CONTENT_B) / 2, msg, MC_DATUM);
 }
 
 static void title(LGFX_Sprite &g, const char *s) { txt(g, FJ16, C_AMBER, 6, CONTENT_Y + 2, s); }
@@ -40,11 +42,11 @@ static void valueUnit(LGFX_Sprite &g, int xr, int y, const char *v, const char *
   txt(g, FJ16, c, xr - uw, y, v, TR_DATUM);
 }
 
-static void cell(LGFX_Sprite &g, int x, int y, const char *label, const char *v, const char *unit, uint32_t c = C_TEXT)
+static void cell(LGFX_Sprite &g, int x, int y, const char *label, const char *v, const char *unit, uint32_t c, int w)
 {
-  g.fillRoundRect(x, y, 99, 21, 4, C_PANEL);
+  g.fillRoundRect(x, y, w, 21, 4, C_PANEL);
   txt(g, FJ12, C_DIM, x + 5, y + 5, label);
-  valueUnit(g, x + 95, y + 3, v, unit, c);
+  valueUnit(g, x + w - 4, y + 3, v, unit, c);
 }
 
 static void drawNow(LGFX_Sprite &g)
@@ -59,7 +61,7 @@ static void drawNow(LGFX_Sprite &g)
   char b[32];
   txt(g, FJ16, C_AMBER, 6, CONTENT_Y + 2, WX_PLACE);
   snprintf(b, sizeof(b), "%s 観測", w.obsTime);
-  txt(g, FJ12, C_DIM, INFO_W - 6, CONTENT_Y + 5, b, TR_DATUM);
+  txt(g, FJ12, C_DIM, pageW - 6, CONTENT_Y + 5, b, TR_DATUM);
 
   drawWxIcon(g, 48, 88, 70, w.code, w.isDay, C_BG);
   snprintf(b, sizeof(b), "%.1f", w.temp);
@@ -76,19 +78,44 @@ static void drawNow(LGFX_Sprite &g)
   }
   txt(g, FJ20, C_TEXT, INFO_W / 2, 128, wxLabel(w.code), TC_DATUM);
 
-  int y = 156;
+  // 広いときは右にこれからの 5 時間を並べ、下の枠は 3 列にする
+  if (pageWide())
+  {
+    g.drawFastVLine(INFO_W + 2, 54, 96, C_LINE);
+    for (int i = 1; i <= 5 && i < w.hourN; i++)
+    {
+      const HourWx &h = w.hours[i];
+      int y = 34 + i * 20;
+      snprintf(b, sizeof(b), "%d時", h.hour);
+      txt(g, FJ12, C_DIM, INFO_W + 32, y + 3, b, TR_DATUM);
+      drawWxIcon(g, INFO_W + 48, y + 9, 18, h.code, h.day, C_BG);
+      snprintf(b, sizeof(b), "%d°", (int)lroundf(h.temp));
+      txt(g, FJ16, C_TEXT, INFO_W + 84, y, b, TR_DATUM);
+      if (h.pop > 0)
+      {
+        snprintf(b, sizeof(b), "%d", h.pop);
+        txt(g, FJ12, h.pop >= 50 ? C_BLUE : 0x80C0FF, pageW - 6, y + 3, b, TR_DATUM);
+      }
+    }
+  }
+  const int CW = pageWide() ? 102 : 99, COLS = pageWide() ? 3 : 2;
+  int k = 0;
+  auto at = [&](int &x, int &y) {
+    x = 4 + k % COLS * (CW + 2);
+    y = (pageWide() ? 164 : 156) + k / COLS * (pageWide() ? 26 : 23);
+    k++;
+  };
+  int x, y;
   snprintf(b, sizeof(b), "%.1f", w.feels);
-  cell(g, 4, y, "体感", b, "°");
+  at(x, y), cell(g, x, y, "体感", b, "°", C_TEXT, CW);
   snprintf(b, sizeof(b), "%d", w.hum);
-  cell(g, 105, y, "湿度", b, "%");
-  y += 23;
+  at(x, y), cell(g, x, y, "湿度", b, "%", C_TEXT, CW);
   snprintf(b, sizeof(b), "%.1f", w.wind);
-  cell(g, 4, y, windName(w.windDir), b, "m/s"); // 「北北西 4.0」を値にすると見出しにかかるので、風向きを見出しにする
+  at(x, y), cell(g, x, y, windName(w.windDir), b, "m/s", C_TEXT, CW); // 「北北西 4.0」を値にすると見出しにかかるので、風向きを見出しにする
   snprintf(b, sizeof(b), "%d", w.dayN > 0 ? w.days[0].pop : 0);
-  cell(g, 105, y, "降水確率", b, "%", C_BLUE);
-  y += 23;
-  cell(g, 4, y, "日の出", w.sunrise, "");
-  cell(g, 105, y, "日の入", w.sunset, "");
+  at(x, y), cell(g, x, y, "降水確率", b, "%", C_BLUE, CW);
+  at(x, y), cell(g, x, y, "日の出", w.sunrise, "", C_TEXT, CW);
+  at(x, y), cell(g, x, y, "日の入", w.sunset, "", C_TEXT, CW);
 }
 
 // ---- 24 時間の予報 ----
@@ -103,7 +130,7 @@ static void drawHourly(LGFX_Sprite &g)
   title(g, "24時間の予報");
 
   int n = w.hourN;
-  auto X = [&](int i) { return 16 + i * (INFO_W - 32) / (n - 1); };
+  auto X = [&](int i) { return 16 + i * (pageW - 32) / (n - 1); };
   float lo = 99, hi = -99;
   for (int i = 0; i < n; i++)
   {
@@ -112,7 +139,7 @@ static void drawHourly(LGFX_Sprite &g)
   }
   char b[16];
   snprintf(b, sizeof(b), "%d〜%d°", (int)lroundf(lo), (int)lroundf(hi));
-  txt(g, FJ12, C_DIM, INFO_W - 6, CONTENT_Y + 5, b, TR_DATUM);
+  txt(g, FJ12, C_DIM, pageW - 6, CONTENT_Y + 5, b, TR_DATUM);
   if (hi - lo < 2)
   {
     lo -= 1;
@@ -123,7 +150,7 @@ static void drawHourly(LGFX_Sprite &g)
 
   for (int i = 0; i < n; i += 3)
   {
-    drawWxIcon(g, X(i), 60, 22, w.hours[i].code, w.hours[i].day, C_BG);
+    drawWxIcon(g, X(i), 60, pageWide() ? 28 : 22, w.hours[i].code, w.hours[i].day, C_BG);
     g.drawFastVLine(X(i), TT - 4, 192 - TT + 4, C_PANEL);
   }
   for (int i = 1; i < n; i++)
@@ -140,7 +167,7 @@ static void drawHourly(LGFX_Sprite &g)
   // 降水確率の棒
   const int PB = 190, PH = 36;
   txt(g, FJ12, C_DIM, 4, 140, "降水確率");
-  g.drawFastHLine(8, PB, INFO_W - 16, C_LINE);
+  g.drawFastHLine(8, PB, pageW - 16, C_LINE);
   for (int i = 0; i < n; i++)
   {
     int p = max(0, (int)w.hours[i].pop);
@@ -158,7 +185,7 @@ static void drawHourly(LGFX_Sprite &g)
     snprintf(b, sizeof(b), "%d", w.hours[i].hour);
     txt(g, &fonts::DejaVu9, C_DIM, X(i), PB + 4, b, TC_DATUM);
   }
-  txt(g, FJ12, C_DIM, INFO_W - 4, PB + 18, "時", TR_DATUM);
+  txt(g, FJ12, C_DIM, pageW - 4, PB + 18, "時", TR_DATUM);
 }
 
 // ---- 週間予報 ----
@@ -181,22 +208,34 @@ static void drawWeek(LGFX_Sprite &g)
     hi = lo + 1;
 
   char b[16];
-  const int RH = 27, BX = 156, BW = 16;
+  // 広いときは日付を月から出し、天気の名前を足して、最低〜最高の棒を長くする
+  const bool wide = pageWide();
+  const int RH = 27, IX = wide ? 92 : 71, PX = wide ? 214 : 120, BX = wide ? 248 : 156, BW = wide ? 30 : 16;
   for (int i = 0; i < w.dayN; i++)
   {
     const DayWx &d = w.days[i];
     int y = CONTENT_Y + 2 + i * RH;
     if (i > 0)
-      g.drawFastHLine(4, y - 1, INFO_W - 8, C_LINE);
+      g.drawFastHLine(4, y - 1, pageW - 8, C_LINE);
     uint32_t wc = d.wday == 0 ? 0xFF7070 : d.wday == 6 ? 0x70A8FF : C_TEXT;
     txt(g, FJ16, i == 0 ? C_AMBER : wc, 6, y + 5, i == 0 ? "今日" : WDAY_JA[d.wday]);
-    snprintf(b, sizeof(b), "%d", d.mday); // 月まで出すと隣のアイコンにかかる
-    txt(g, FJ12, C_DIM, 56, y + 8, b, TR_DATUM);
-    drawWxIcon(g, 71, y + 13, 24, d.code, true, C_BG);
+    if (wide)
+      snprintf(b, sizeof(b), "%d/%d", d.mon, d.mday);
+    else
+      snprintf(b, sizeof(b), "%d", d.mday); // 月まで出すと隣のアイコンにかかる
+    txt(g, FJ12, C_DIM, IX - 15, y + 8, b, TR_DATUM);
+    drawWxIcon(g, IX, y + 13, 24, d.code, true, C_BG);
+    if (wide)
+    {
+      static char name[1][LINE_CAP];
+      g.setFont(FJ12);
+      wrapText(g, wxLabel(d.code), PX - 32 - (IX + 16), name, 1);
+      txt(g, FJ12, C_TEXT, IX + 16, y + 8, name[0]);
+    }
     if (d.pop >= 0)
     {
       snprintf(b, sizeof(b), "%d%%", d.pop);
-      txt(g, FJ12, d.pop >= 50 ? C_BLUE : C_DIM, 120, y + 8, b, TR_DATUM);
+      txt(g, FJ12, d.pop >= 50 ? C_BLUE : C_DIM, PX, y + 8, b, TR_DATUM);
     }
     snprintf(b, sizeof(b), "%d°", (int)lroundf(d.tmin));
     txt(g, FJ16, 0x80C0FF, BX - 4, y + 5, b, TR_DATUM);
@@ -246,7 +285,7 @@ static void drawSunPart(LGFX_Sprite &g, const Weather &w, time_t now)
   txt(g, FJ12, C_DIM, 6, CONTENT_Y + 45, b);
 
   // 右に太陽の通り道。昼は上の弧 (左が日の出、右が日の入り)、夜は下の浅い弧を右から左へ戻る
-  const int cx = 160, hy = CONTENT_Y + 40, rx = 36, ry = 30, ryN = 10;
+  const int cx = pageWide() ? pageW - 76 : 160, hy = CONTENT_Y + 40, rx = pageWide() ? 60 : 36, ry = 30, ryN = 10;
   for (int i = 0; i <= 36; i++)
   {
     float a = PI * i / 36;
@@ -275,27 +314,27 @@ static void drawSunPart(LGFX_Sprite &g, const Weather &w, time_t now)
   hm(b, sizeof(b), day || now < r0 ? r0 : r1);
   txt(g, FJ12, C_DIM, cx - rx, hy + 14, b, TC_DATUM);
   hm(b, sizeof(b), s0);
-  txt(g, FJ12, C_DIM, INFO_W - 4, hy + 14, b, TR_DATUM);
+  txt(g, FJ12, C_DIM, pageW - 4, hy + 14, b, TR_DATUM);
 }
 
 static void drawTidePart(LGFX_Sprite &g, const Tide &t, time_t now)
 {
   const int Y0 = CONTENT_Y + 72;
-  g.drawFastHLine(4, Y0 - 3, INFO_W - 8, C_LINE);
+  g.drawFastHLine(4, Y0 - 3, pageW - 8, C_LINE);
   txt(g, FJ16, C_AMBER, 6, Y0, TIDE_PLACE "の潮位");
   struct tm tm;
   localtime_r(&now, &tm);
   if (!t.ok || t.mday != tm.tm_mday)
   {
-    txt(g, FJ12, C_DIM, INFO_W / 2, Y0 + 50, "潮位を取得中…", MC_DATUM);
+    txt(g, FJ12, C_DIM, pageW / 2, Y0 + 50, "潮位を取得中…", MC_DATUM);
     return;
   }
   char b[32];
   snprintf(b, sizeof(b), "%s 月齢%.1f", t.title, t.moonAge);
-  txt(g, FJ12, C_DIM, INFO_W - 6, Y0 + 3, b, TR_DATUM);
+  txt(g, FJ12, C_DIM, pageW - 6, Y0 + 3, b, TR_DATUM);
 
   // 今日の 0〜24 時の潮位の線。満潮・干潮には時刻を添える
-  const int GX0 = 8, GX1 = INFO_W - 8, GT = Y0 + 34, GB = Y0 + 76;
+  const int GX0 = 8, GX1 = pageW - 8, GT = Y0 + 34, GB = Y0 + 76;
   float lo = 1e9, hi = -1e9;
   for (float v : t.cm)
   {
@@ -350,7 +389,7 @@ static void drawTidePart(LGFX_Sprite &g, const Tide &t, time_t now)
       char d[20];
       fmtDur(d, sizeof(d), t.ev[i].t - now);
       snprintf(b, sizeof(b), "%sまで %s", t.ev[i].high ? "満潮" : "干潮", d);
-      txt(g, FJ12, t.ev[i].high ? 0x80C0FF : C_DIM, INFO_W - 6, RY + 3, b, TR_DATUM);
+      txt(g, FJ12, t.ev[i].high ? 0x80C0FF : C_DIM, pageW - 6, RY + 3, b, TR_DATUM);
       break;
     }
 }
@@ -416,6 +455,8 @@ static uint8_t *moonShade(int r)
   auto wave = [](float x, float y) { // 海の縁を不規則にするゆらぎ
     return sinf(x * 7.1f + y * 3.3f) * 0.5f + sinf(-x * 4.7f + y * 8.9f) * 0.35f + sinf(x * 13.3f - y * 11.1f) * 0.15f;
   };
+  if (!tab)
+    return nullptr;
   for (int py = -r; py <= r; py++)
     for (int px = -r; px <= r; px++)
     {
@@ -495,6 +536,18 @@ static int daysFromToday(time_t t, time_t now)
   return (int)lround(difftime(mktime(&a), mktime(&n)) / 86400);
 }
 
+// いまの月の形 (新月 0 → 満月 0.5 → 新月 1) と月齢 (日)。満ち欠けは計算で出す (取得しなくても出せる)
+static float moonPhase(time_t now, float *age)
+{
+  time_t nextNew = nextMoonPhase(now, false), prevNew = nextMoonPhase(now - 31 * 86400, false);
+  for (time_t p; (p = nextMoonPhase(prevNew, false)) && p <= now;)
+    prevNew = p;
+  // 形は新月→満月→新月の実際の時刻の間で割り振る (平均の周期で割ると、月の速さのむらで数 % ずれる)
+  time_t full = nextMoonPhase(prevNew, true);
+  *age = (now - prevNew) / 86400.0f;
+  return now < full ? 0.5f * (now - prevNew) / (full - prevNew) : 0.5f + 0.5f * (now - full) / (nextNew - full);
+}
+
 static void drawMoon(LGFX_Sprite &g)
 {
   static Tide t;
@@ -505,14 +558,7 @@ static void drawMoon(LGFX_Sprite &g)
   if (now < 1700000000)
     return noData(g, "時刻を合わせています…");
 
-  // 満ち欠けは計算で出す (取得しなくても出せる)
-  time_t nextNew = nextMoonPhase(now, false), prevNew = nextMoonPhase(now - 31 * 86400, false);
-  for (time_t p; (p = nextMoonPhase(prevNew, false)) && p <= now;)
-    prevNew = p;
-  // 形は新月→満月→新月の実際の時刻の間で割り振る (平均の周期で割ると、月の速さのむらで数 % ずれる)
-  time_t full = nextMoonPhase(prevNew, true);
-  float f = now < full ? 0.5f * (now - prevNew) / (full - prevNew) : 0.5f + 0.5f * (now - full) / (nextNew - full);
-  float age = (now - prevNew) / 86400.0f;
+  float age, f = moonPhase(now, &age);
   drawMoonDisc(g, 52, CONTENT_Y + 46, 40, f);
 
   char b[40];
@@ -524,9 +570,11 @@ static void drawMoon(LGFX_Sprite &g)
   snprintf(b, sizeof(b), "輝いている面 %d%%", (int)lroundf((1 - cosf(2 * PI * f)) / 2 * 100));
   txt(g, FJ12, C_DIM, RX, CONTENT_Y + 75, b);
 
-  // 月の出・南中・月の入り。出ている間はその月、沈んでいれば次に出る月
-  int Y1 = CONTENT_Y + 95;
-  g.drawFastHLine(4, Y1 - 3, INFO_W - 8, C_LINE);
+  // 月の出・南中・月の入り。出ている間はその月、沈んでいれば次に出る月。広いときは字を大きくして間を空ける
+  const bool wide = pageWide();
+  const lgfx::IFont *FV = wide ? FJ20 : FJ16;
+  int Y1 = CONTENT_Y + (wide ? 100 : 95);
+  g.drawFastHLine(4, Y1 - 3, pageW - 8, C_LINE);
   const MoonPass *p = nullptr;
   bool up = false;
   if (t.ok)
@@ -543,7 +591,7 @@ static void drawMoon(LGFX_Sprite &g)
     }
   if (!p)
   {
-    txt(g, FJ12, C_DIM, INFO_W / 2, Y1 + 30, "月の出・月の入りを取得中…", MC_DATUM);
+    txt(g, FJ12, C_DIM, pageW / 2, Y1 + 30, "月の出・月の入りを取得中…", MC_DATUM);
   }
   else
   {
@@ -551,23 +599,23 @@ static void drawMoon(LGFX_Sprite &g)
     time_t T[] = {p->rise, p->mid, p->set};
     for (int i = 0; i < 3; i++)
     {
-      int x = 36 + i * 68;
+      int x = wide ? pageW / 6 + i * pageW / 3 : 36 + i * 68;
       txt(g, FJ12, C_DIM, x, Y1 + 1, L[i], TC_DATUM);
       if (T[i])
         hmDay(b, sizeof(b), T[i], now);
       else
         strcpy(b, "--");
-      txt(g, FJ16, T[i] && T[i] <= now ? C_DIM : C_TEXT, x, Y1 + 15, b, TC_DATUM); // 過ぎたものは暗く
+      txt(g, FV, T[i] && T[i] <= now ? C_DIM : C_TEXT, x, Y1 + 15, b, TC_DATUM); // 過ぎたものは暗く
     }
-    int Y2 = Y1 + 38;
-    g.drawFastHLine(4, Y2 - 3, INFO_W - 8, C_LINE);
+    int Y2 = Y1 + (wide ? 48 : 38);
+    g.drawFastHLine(4, Y2 - 3, pageW - 8, C_LINE);
     txt(g, FJ12, C_DIM, 6, Y2 + 3, up ? "月の入りまで" : "月の出まで");
     fmtDur(b, sizeof(b), (up ? p->set : p->rise) - now);
-    txt(g, FJ16, (uint32_t)0xF4EBC4, INFO_W - 6, Y2, b, TR_DATUM);
+    txt(g, FV, (uint32_t)0xF4EBC4, pageW - 6, Y2, b, TR_DATUM);
   }
 
-  // 次の満月・新月 (近いほうを先に)
-  time_t nextFull = nextMoonPhase(now, true);
+  // 次の満月・新月 (近いほうを先に)。広いときは右上に並べる
+  time_t nextFull = nextMoonPhase(now, true), nextNew = nextMoonPhase(now, false);
   struct
   {
     const char *name;
@@ -575,20 +623,35 @@ static void drawMoon(LGFX_Sprite &g)
   } ev[2] = {{"満月", nextFull}, {"新月", nextNew}};
   if (nextNew < nextFull)
     std::swap(ev[0], ev[1]);
+  if (wide)
+    g.drawFastVLine(INFO_W + 2, CONTENT_Y + 4, 82, C_LINE);
   for (int i = 0; i < 2; i++)
   {
-    int y = CONTENT_Y + 158 + i * 17;
     struct tm tm;
     localtime_r(&ev[i].at, &tm);
-    txt(g, FJ12, C_DIM, 6, y, ev[i].name);
-    snprintf(b, sizeof(b), "%d/%d(%s) %d:%02d", tm.tm_mon + 1, tm.tm_mday, WDAY_JA[tm.tm_wday], tm.tm_hour, tm.tm_min);
-    txt(g, FJ12, C_TEXT, 36, y, b);
     int d = daysFromToday(ev[i].at, now);
+    char dd[16];
     if (d == 0)
-      strcpy(b, "今日");
+      strcpy(dd, "今日");
     else
-      snprintf(b, sizeof(b), "あと%d日", d);
-    txt(g, FJ12, C_DIM, INFO_W - 6, y, b, TR_DATUM);
+      snprintf(dd, sizeof(dd), "あと%d日", d);
+    if (wide)
+    {
+      // 1 行目に名前とあと何日、2 行目に日付と時刻を両端に分ける (続けて書くと幅に入らない)
+      int x = INFO_W + 10, y = CONTENT_Y + 6 + i * 42;
+      txt(g, FJ16, ev[i].at == nextFull ? (uint32_t)0xF4EBC4 : C_TEXT, x, y, ev[i].name);
+      txt(g, FJ12, C_DIM, pageW - 6, y + 3, dd, TR_DATUM);
+      snprintf(b, sizeof(b), "%d/%d(%s)", tm.tm_mon + 1, tm.tm_mday, WDAY_JA[tm.tm_wday]);
+      txt(g, FJ12, C_TEXT, x, y + 20, b);
+      snprintf(b, sizeof(b), "%d:%02d", tm.tm_hour, tm.tm_min);
+      txt(g, FJ12, C_TEXT, pageW - 6, y + 20, b, TR_DATUM);
+      continue;
+    }
+    snprintf(b, sizeof(b), "%d/%d(%s) %d:%02d", tm.tm_mon + 1, tm.tm_mday, WDAY_JA[tm.tm_wday], tm.tm_hour, tm.tm_min);
+    int y = CONTENT_Y + 158 + i * 17;
+    txt(g, FJ12, C_DIM, 6, y, ev[i].name);
+    txt(g, FJ12, C_TEXT, 36, y, b);
+    txt(g, FJ12, C_DIM, pageW - 6, y, dd, TR_DATUM);
   }
 }
 
@@ -596,6 +659,7 @@ static void drawMoon(LGFX_Sprite &g)
 static char ovLines[40][LINE_CAP];
 static int ovLineN = 0;
 static time_t ovWrapped = -1;
+static int ovWrapW = 0;
 static int ovSkip = 0;
 
 static int ovScreens() { return max(1, (ovLineN + OV_LINES_PER - 1) / OV_LINES_PER); }
@@ -605,7 +669,7 @@ static void drawOverview(LGFX_Sprite &g, uint32_t ms)
 {
   xSemaphoreTake(dataLock, portMAX_DELAY);
   bool ok = ov.ok;
-  if (ok && ov.at != ovWrapped)
+  if (ok && (ov.at != ovWrapped || pageW != ovWrapW))
   {
     // 段落の間の空行は詰める (段落の頭の全角空白で区切りが分かる)
     static char buf[sizeof(ov.text)];
@@ -615,8 +679,9 @@ static void drawOverview(LGFX_Sprite &g, uint32_t ms)
         *w++ = *r;
     *w = 0;
     g.setFont(FJ16);
-    ovLineN = wrapText(g, buf, INFO_W - 12, ovLines, 40);
+    ovLineN = wrapText(g, buf, pageW - 12, ovLines, 40);
     ovWrapped = ov.at;
+    ovWrapW = pageW;
   }
   char office[32], report[12];
   strlcpy(office, ov.office, sizeof(office));
@@ -627,14 +692,14 @@ static void drawOverview(LGFX_Sprite &g, uint32_t ms)
 
   title(g, "天気概況");
   g.setFont(FJ16);
-  int room = INFO_W - 6 - (6 + g.textWidth("天気概況") + 8); // 見出しの右に空いている幅
+  int room = pageW - 6 - (6 + g.textWidth("天気概況") + 8); // 見出しの右に空いている幅
   char b[64];
   snprintf(b, sizeof(b), "%s %s発表", office, report);
   g.setFont(FJ12);
   if (g.textWidth(b) > room) // 入らなければ気象台の名前は省く
     snprintf(b, sizeof(b), "%s発表", report);
-  txt(g, FJ12, C_DIM, INFO_W - 6, CONTENT_Y + 5, b, TR_DATUM);
-  g.drawFastHLine(4, CONTENT_Y + 22, INFO_W - 8, C_LINE);
+  txt(g, FJ12, C_DIM, pageW - 6, CONTENT_Y + 5, b, TR_DATUM);
+  g.drawFastHLine(4, CONTENT_Y + 22, pageW - 8, C_LINE);
   int first = ovScreen(ms) * OV_LINES_PER;
   for (int i = 0; i < OV_LINES_PER && first + i < ovLineN; i++)
     txt(g, FJ16, C_TEXT, 6, CONTENT_Y + 28 + i * 20, ovLines[first + i]);
@@ -645,7 +710,7 @@ static int newsIdx = 0;       // 次に見せる記事 (ページを離れても
 static int newsShown = 0;     // 今回見せた本数
 static uint32_t newsItemAt = 0, newsLastMs = 0;
 static char nwTitle[4][LINE_CAP], nwDesc[8][LINE_CAP];
-static int nwTitleN = 0, nwDescN = 0, nwKey = -1;
+static int nwTitleN = 0, nwDescN = 0, nwKey = -1, nwW = 0;
 static time_t nwAt = -1;
 
 static uint32_t catColor(const char *cat)
@@ -674,7 +739,8 @@ static void drawNews(LGFX_Sprite &g)
   int idx = newsIdx % n;
   static Article a;
   a = news.items[idx];
-  bool rewrap = idx != nwKey || news.at != nwAt;
+  bool rewrap = idx != nwKey || news.at != nwAt || pageW != nwW;
+  nwW = pageW;
   nwKey = idx;
   nwAt = news.at;
   xSemaphoreGive(dataLock);
@@ -683,10 +749,10 @@ static void drawNews(LGFX_Sprite &g)
   if (rewrap)
   {
     g.setFont(FJ20);
-    nwTitleN = wrapText(g, a.title, INFO_W - 10, nwTitle, 4);
+    nwTitleN = wrapText(g, a.title, pageW - 10, nwTitle, 4);
     int dy = TY + nwTitleN * TLH + 10;
     g.setFont(FE14);
-    nwDescN = wrapText(g, a.desc, INFO_W - 10, nwDesc, min(8, (CONTENT_B - dy) / DLH));
+    nwDescN = wrapText(g, a.desc, pageW - 10, nwDesc, min(8, (CONTENT_B - dy) / DLH));
   }
 
   g.setFont(FJ12);
@@ -694,12 +760,12 @@ static void drawNews(LGFX_Sprite &g)
   g.fillRoundRect(4, CONTENT_Y + 2, cw, 16, 4, catColor(a.cat));
   txt(g, FJ12, C_BG, 9, CONTENT_Y + 4, a.cat);
   txt(g, FJ12, C_DIM, cw + 10, CONTENT_Y + 4, a.when);
-  txt(g, FJ12, C_DIM, INFO_W - 6, CONTENT_Y + 4, "NHK", TR_DATUM);
+  txt(g, FJ12, C_DIM, pageW - 6, CONTENT_Y + 4, "NHK", TR_DATUM);
 
   for (int i = 0; i < nwTitleN; i++)
     txt(g, FJ20, C_TEXT, 5, TY + i * TLH, nwTitle[i]);
   int dy = TY + nwTitleN * TLH + 3;
-  g.drawFastHLine(4, dy, INFO_W - 8, C_LINE);
+  g.drawFastHLine(4, dy, pageW - 8, C_LINE);
   dy += 7;
   for (int i = 0; i < nwDescN; i++)
     txt(g, FE14, 0xA8B8C8, 5, dy + i * DLH, nwDesc[i]);
@@ -722,6 +788,24 @@ static uint32_t shindoColor(const char *m)
   }
 }
 
+// 最大震度の四角 (左上 x, y、大きさ w x h)
+static void shindoBox(LGFX_Sprite &g, int x, int y, int w, int h, const char *m)
+{
+  g.fillRoundRect(x, y, w, h, 4, shindoColor(m));
+  uint32_t tc = *m == '3' || *m == '4' || (*m == '5' && m[1] != '+') ? C_BG : C_TEXT;
+  int cx = x + w / 2, cy = y + h / 2;
+  if (!*m)
+    txt(g, FJ12, C_DIM, cx, cy, "-", MC_DATUM);
+  else if (m[1] == '-' || m[1] == '+')
+  {
+    char b[8];
+    snprintf(b, sizeof(b), "%c%s", m[0], m[1] == '+' ? "強" : "弱");
+    txt(g, FJ12, tc, cx, cy, b, MC_DATUM);
+  }
+  else
+    txt(g, FJ20, tc, cx, cy, m, MC_DATUM);
+}
+
 static void drawQuake(LGFX_Sprite &g)
 {
   static Quakes qs;
@@ -738,34 +822,29 @@ static void drawQuake(LGFX_Sprite &g)
     const Quake &q = qs.q[i];
     int y = CONTENT_Y + 1 + i * RH;
     if (i > 0)
-      g.drawFastHLine(4, y - 1, INFO_W - 8, C_LINE);
-    // 最大震度の四角
-    uint32_t c = shindoColor(q.maxi);
-    g.fillRoundRect(4, y + 2, 28, 27, 4, c);
-    uint32_t tc = *q.maxi == '3' || *q.maxi == '4' || (*q.maxi == '5' && q.maxi[1] != '+') ? C_BG : C_TEXT;
-    if (!*q.maxi)
-      txt(g, FJ12, C_DIM, 18, y + 16, "-", MC_DATUM);
-    else if (q.maxi[1] == '-' || q.maxi[1] == '+')
-    {
-      snprintf(b, sizeof(b), "%c%s", q.maxi[0], q.maxi[1] == '+' ? "強" : "弱");
-      txt(g, FJ12, tc, 18, y + 16, b, MC_DATUM);
-    }
-    else
-      txt(g, FJ20, tc, 18, y + 16, q.maxi, MC_DATUM);
+      g.drawFastHLine(4, y - 1, pageW - 8, C_LINE);
+    shindoBox(g, 4, y + 2, 28, 27, q.maxi);
 
+    // 広いときは規模を右に大きく出し、深さは「深さ」と書く
+    const bool wide = pageWide();
+    if (wide && *q.mag)
+    {
+      snprintf(b, sizeof(b), "M%s", q.mag);
+      txt(g, FJ20, C_TEXT, pageW - 6, y + 6, b, TR_DATUM);
+    }
     // 震源地 (長ければ「…」で切る)
     static char line[1][LINE_CAP];
     g.setFont(FJ16);
-    wrapText(g, *q.place ? q.place : "震源を調査中", INFO_W - 42, line, 1);
+    wrapText(g, *q.place ? q.place : "震源を調査中", pageW - 42 - (wide ? 56 : 0), line, 1);
     txt(g, FJ16, *q.place ? C_TEXT : C_DIM, 38, y + 1, line[0]);
     // 時刻・規模・深さ
     int n = snprintf(b, sizeof(b), "%s", q.when);
-    if (*q.mag)
+    if (*q.mag && !wide)
       n += snprintf(b + n, sizeof(b) - n, " M%s", q.mag);
     if (q.depth == 0)
       snprintf(b + n, sizeof(b) - n, " ごく浅い");
     else if (q.depth > 0)
-      snprintf(b + n, sizeof(b) - n, " %dkm", q.depth); // 「深さ」まで書くと幅に入らない
+      snprintf(b + n, sizeof(b) - n, wide ? "  深さ %dkm" : " %dkm", q.depth); // 狭いときは「深さ」まで書くと幅に入らない
     txt(g, FJ12, C_DIM, 38, y + 18, b);
   }
 }
