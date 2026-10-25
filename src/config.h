@@ -15,6 +15,10 @@
 #define SW4_PIN    2
 #define BUZZER_PIN 6
 
+// ---- WiFi (起動時に WiFiManager の設定ポータルで設定する。include/WiFiSetup.h は WorkingTimer と同じファイル) ----
+#define DEVICE_BASE_NAME "LuminaCanvas" // 後ろに MAC の末尾 4 桁を付けて AP 名・ホスト名に使う (例 LuminaCanvas-3FA2)
+#define WIFI_PORTAL_SEC  180            // 設定モードの上限。過ぎたらオフラインで動く (保存済みの WiFi へのつなぎ直しは続ける)
+
 // ---- 場所 (岐阜市) ----
 #define WX_PLACE "岐阜市"
 #define WX_LAT   "35.4232"

@@ -6,7 +6,6 @@
 #include <ArduinoJson.h>
 #include <algorithm>
 #include "common.h"
-#include "secrets.h"
 
 Weather wx;
 Overview ov;
@@ -666,9 +665,7 @@ void netBegin()
   news.items = (Article *)ps_calloc(NEWS_MAX, sizeof(Article));
   newsSpare = (Article *)ps_calloc(NEWS_MAX, sizeof(Article));
 
-  WiFi.mode(WIFI_STA);
-  WiFi.setAutoReconnect(true);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  // WiFi は setup() の setupWiFi() でつないである (つながっていなくても、後でつながれば時刻も合う)
   configTzTime("JST-9", "ntp.nict.jp", "time.google.com", "pool.ntp.org");
   xTaskCreatePinnedToCore(netTask, "net", 16384, nullptr, 1, nullptr, 0);
 }

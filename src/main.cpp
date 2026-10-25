@@ -1,5 +1,6 @@
 // LuminaCanvas: 左に天気とニュースのページ、右の小窓にゲームのデモを次々に流す
 #include <WiFi.h>
+#include "WiFiSetup.h"
 #include "common.h"
 #include "pages.h"
 #include "demos/demo.h"
@@ -432,6 +433,31 @@ void splash()
     lcd.fillRect(SCREEN_W / 2 - 60 + i * 26, 118, 18, 3, mix(C_CYAN, C_AMBER, i / 4.0f));
 }
 
+// WiFi の設定モード (設定ポータルの間は loop() が止まっているので、一度描くだけ)
+void drawWifiSetup(const char *apName)
+{
+  char buf[48];
+  lcd.fillScreen(C_BG);
+  lcd.setTextDatum(TC_DATUM);
+  lcd.setFont(FJ16);
+  lcd.setTextColor(C_CYAN);
+  lcd.drawString("WiFi 設定モード", SCREEN_W / 2, 24);
+  lcd.drawFastHLine(16, 50, SCREEN_W - 32, C_LINE);
+  lcd.setFont(FJ12);
+  lcd.setTextColor(C_DIM);
+  lcd.drawString("スマホで次の WiFi につなぐ", SCREEN_W / 2, 66);
+  lcd.setFont(&fonts::lgfxJapanGothicP_24);
+  lcd.setTextColor(C_TEXT);
+  lcd.drawString(apName, SCREEN_W / 2, 86);
+  lcd.setFont(FJ16);
+  lcd.drawString("→ 192.168.4.1 を開いて設定する", SCREEN_W / 2, 128);
+  lcd.setFont(FJ12);
+  lcd.setTextColor(C_DIM);
+  snprintf(buf, sizeof(buf), "%d 分たつとオフラインで動きます", WIFI_PORTAL_SEC / 60);
+  lcd.drawString(buf, SCREEN_W / 2, 176);
+  lcd.drawString("SW1 を押しながら起動で WiFi の設定を消す", SCREEN_W / 2, 194);
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -468,15 +494,17 @@ void setup()
   demos[7] = makeMouse();
   demos[8] = makeSnake();
 
+  // WiFi: 保存済みの WiFi につなぐ (その間は起動画面)。つながらなければ設定モード
+  // (SW1 を押しながら起動すると設定を消して設定モード)
+  String deviceName = makeDeviceName(DEVICE_BASE_NAME);
+  setupWiFi(deviceName.c_str(), drawWifiSetup, SW1_PIN, WIFI_PORTAL_SEC);
+  Serial.printf("device: %s (%s)\n", deviceName.c_str(), deviceDisplayName().c_str());
+  // 設定を消すために押した SW1 を、離したときの操作 (次のページ・明るさ) として拾わない
+  if (digitalRead(SW1_PIN) == LOW)
+    sw1.down = sw1.raw = sw1.longFired = true;
+
   netBegin();
-  PLAY(SND_BOOT);
-  // WiFi がつながるまで (長くても 6 秒) 起動画面を出しておく
-  uint32_t t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 6000)
-  {
-    soundUpdate();
-    delay(10);
-  }
+  PLAY(SND_BOOT); // つなぐ間は soundUpdate() が回らないので、鳴らすのはつないだ後
 
   lcd.fillScreen(C_BG);
   startDemo(0);
@@ -486,6 +514,7 @@ void setup()
 
 void loop()
 {
+  wifiKeepAlive();
   handleButtons();
   soundUpdate();
 

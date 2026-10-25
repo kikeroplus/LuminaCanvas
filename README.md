@@ -84,9 +84,19 @@ SW3 で SNAKE の次に「なし」を選ぶと、デモの小窓がなくなり
 | SW3 | 次のデモ (SNAKE の次は「なし」) | ページの自動切り替えを止める / 再開 (止めている間は上の線が黄色) |
 | SW4 | ニュースは次の記事、概況は次の画面 | 天気とニュースをすぐ取り直す |
 
+## WiFi の設定
+
+SSID とパスワードはファームウェアに書かず、起動時の設定ポータル (WiFiManager) で決める。仕組みは WorkingTimer・InfoPanel と同じで、`include/WiFiSetup.h` は WorkingTimer と同じファイル (直すときはすべてを揃える)。
+
+1. 保存済みの WiFi につながらないと (書き込み直後など)、画面が「WiFi 設定モード」になり、AP `LuminaCanvas-XXXX` (MAC の末尾 4 桁) が立つ。
+2. スマホでその AP につなぎ、`192.168.4.1` を開く (たいていは自動で開く)。
+3. 「Configure WiFi」で SSID を選んでパスワードを入れ、保存する。2.4GHz の SSID だけが出る (ESP32 は 5GHz を受けられない)。「Device name」は空でよい。
+4. 別の WiFi に変えたいときは **SW1 を押しながら起動 (リセット)** すると、保存済みの WiFi を消して設定モードになる。
+5. 3 分たっても設定しなければ設定モードを終えてオフラインで動く (保存済みの WiFi があれば 30 秒ごとにつなぎ直す)。
+
 ## 作り方
 
-1. `include/secrets.example.h` を `include/secrets.h` にコピーし、WiFi の接続先を書く。
-2. PlatformIO でビルドして書き込む (書き込みは基板の「COM」側の USB 端子)。
+1. PlatformIO でビルドして書き込む (書き込みは基板の「COM」側の USB 端子)。
+2. 初めて起動すると WiFi の設定モードになるので、下の「WiFi の設定」のとおりに接続先を決める。
 
 色が反転していたら `src/lgfx_panel.h` の `cfg.invert`、赤と青が逆なら `cfg.rgb_order`、上下が逆なら `src/config.h` の `TFT_ROTATION` を変える。
